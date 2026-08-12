@@ -1,11 +1,12 @@
+import os
+import joblib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import joblib
-import re
 
 app = FastAPI(title="CivicReport AI API", version="1.2")
 
+# Mengizinkan CORS agar frontend Streamlit bisa mengakses API ini
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,7 +18,7 @@ app.add_middleware(
 model = joblib.load("model.pkl")
 vectorizer = joblib.load("vectorizer.pkl")
 
-# Kata kunci untuk deteksi urgensi
+# Kata kunci deteksi urgensi
 HIGH_URGENCY_KEYWORDS = [
     "darurat", "bahaya", "ambruk", "kebakaran", "korban", 
     "kecelakaan", "banjir", "longsor", "patah", "meledak", "segera"
@@ -29,7 +30,7 @@ class PredictRequest(BaseModel):
 class PredictResponse(BaseModel):
     label: str
     confidence: float
-    urgency: str  # Darurat / Sedang / Normal
+    urgency: str
 
 @app.get("/health")
 def health():
@@ -41,13 +42,11 @@ def predict(req: PredictRequest):
     x = vectorizer.transform([req.text])
     label = str(model.predict(x)[0])
 
-    # Hitung Confidence Score
     confidence = 85.0
     if hasattr(model, "predict_proba"):
         probs = model.predict_proba(x)[0]
         confidence = float(max(probs) * 100)
 
-    # Deteksi Tingkat Urgensi
     if any(word in text_lower for word in HIGH_URGENCY_KEYWORDS):
         urgency = "🔴 DARURAT"
     elif len(req.text) > 150:
@@ -60,3 +59,9 @@ def predict(req: PredictRequest):
         confidence=round(confidence, 2),
         urgency=urgency
     )
+
+if __name__ == "__main__":
+    import uvicorn
+    # Membaca PORT dari environment variable server hosting (default: 8000)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
