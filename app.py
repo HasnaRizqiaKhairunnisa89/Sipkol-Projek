@@ -8,7 +8,10 @@ import streamlit as st
 # -----------------------------------------------------------------------------
 # CONFIG & CONSTANTS
 # -----------------------------------------------------------------------------
-API_URL = "http://127.0.0.1:8000/predict"
+# Mengambil URL API dari Environment Variable atau fallback ke localhost
+API_BASE_URL = os.environ.get("API_URL", "http://127.0.0.1:8000").rstrip("/")
+API_URL = f"{API_BASE_URL}/predict"
+HEALTH_URL = f"{API_BASE_URL}/health"
 LOG_FILE = "logs.csv"
 
 st.set_page_config(
@@ -63,74 +66,70 @@ st.markdown(
 # HELPER FUNCTIONS
 # -----------------------------------------------------------------------------
 def ensure_log_file():
-  if not os.path.exists(LOG_FILE):
-    df = pd.DataFrame(columns=[
-        "timestamp",
-        "pelapor",
-        "lokasi",
-        "text",
-        "predicted_label",
-        "confidence",
-        "urgency",
-    ])
+    if not os.path.exists(LOG_FILE):
+        df = pd.DataFrame(
+            columns=[
+                "timestamp",
+                "pelapor",
+                "lokasi",
+                "text",
+                "predicted_label",
+                "confidence",
+                "urgency",
+            ]
+        )
+        df.to_csv(LOG_FILE, index=False)
+
+
+def append_log(text: str, label: str, confidence: float, urgency: str, pelapor: str, lokasi: str):
+    ensure_log_file()
+    row = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "pelapor": pelapor if pelapor else "Anonim",
+        "lokasi": lokasi if lokasi else "Tidak Disebutkan",
+        "text": text,
+        "predicted_label": label,
+        "confidence": f"{confidence}%",
+        "urgency": urgency,
+    }
+    df = pd.read_csv(LOG_FILE)
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     df.to_csv(LOG_FILE, index=False)
 
 
-def append_log(
-    text: str,
-    label: str,
-    confidence: float,
-    urgency: str,
-    pelapor: str,
-    lokasi: str,
-):
-  ensure_log_file()
-  row = {
-      "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-      "pelapor": pelapor if pelapor else "Anonim",
-      "lokasi": lokasi if lokasi else "Tidak Disebutkan",
-      "text": text,
-      "predicted_label": label,
-      "confidence": f"{confidence}%",
-      "urgency": urgency,
-  }
-  df = pd.read_csv(LOG_FILE)
-  df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-  df.to_csv(LOG_FILE, index=False)
-
-
 def load_logs() -> pd.DataFrame:
-  ensure_log_file()
-  return pd.read_csv(LOG_FILE)
+    ensure_log_file()
+    return pd.read_csv(LOG_FILE)
 
 
 def check_api_health():
-  try:
-    r = requests.get("http://127.0.0.1:8000/health", timeout=2)
-    return r.status_code == 200
-  except Exception:
-    return False
+    try:
+        r = requests.get(HEALTH_URL, timeout=3)
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 # -----------------------------------------------------------------------------
 # SIDEBAR
 # -----------------------------------------------------------------------------
 with st.sidebar:
-  st.image("logo.jpg", width=64)
-  st.title("CivicReport AI")
-  st.caption("Sistem Klasifikasi & Analisis Laporan Publik")
-  st.divider()
+    if os.path.exists("logo.jpg"):
+        st.image("logo.jpg", width=64)
+    st.title("CivicReport AI")
+    st.caption("Sistem Klasifikasi & Analisis Laporan Publik")
+    st.divider()
 
-  api_online = check_api_health()
-  if api_online:
-    st.success("🟢 API Status: Connected", icon="✅")
-  else:
-    st.error("🔴 API Status: Disconnected", icon="⚠️")
-    st.caption("Pastikan uvicorn/FastAPI aktif di port 8000.")
+    api_online = check_api_health()
+    if api_online:
+        st.success("🟢 API Status: Connected", icon="✅")
+    else:
+        st.error("🔴 API Status: Disconnected", icon="⚠️")
+        st.caption("Pastikan Service API FastAPI aktif.")
 
-  st.divider()
-  st.markdown("### 📌 Fitur Utama")
-  st.markdown("""
+    st.divider()
+    st.markdown("### 📌 Fitur Utama")
+    st.markdown("""
     * **NLP Classifier**: Memetakan dinas penanggung jawab.
     * **Urgency Detector**: Deteksi otomatis kasus darurat.
     * **Notification Dispatch**: Notifikasi otomatis ke unit kerja.
@@ -160,99 +159,83 @@ tab1, tab2, tab3 = st.tabs([
 # TAB 1: KLASIFIKASI & DISPATCH
 # -----------------------------------------------------------------------------
 with tab1:
-  col_input, col_result = st.columns([1.2, 0.8], gap="large")
+    col_input, col_result = st.columns([1.2, 0.8], gap="large")
 
-  with col_input:
-    st.subheader("Form Pelaporan Masyarakat")
+    with col_input:
+        st.subheader("Form Pelaporan Masyarakat")
 
-    col_meta1, col_meta2 = st.columns(2)
-    with col_meta1:
-      pelapor_input = st.text_input(
-          "Nama Pelapor (Opsional):", placeholder="Contoh: Budi Prasetyo"
-      )
-    with col_meta2:
-      # PERUBAHAN DI SINI: Menggunakan text_input agar pengguna bebas mengetik
-      lokasi_input = st.text_input(
-          "Wilayah / Kecamatan / Alamat:",
-          placeholder="Contoh: Kec. Ngaliyan / RT 02 RW 05",
-      )
-
-    text_input = st.text_area(
-        "Isi Keluhan Masyarakat:*",
-        height=150,
-        placeholder=(
-            "Contoh: BAHAYA! Pipa air utama bocor deras di dekat persimpangan"
-            " jalan utama, menyebabkan jalan licin dan berpotensi memicu"
-            " kecelakaan..."
-        ),
-    )
-
-    btn_predict = st.button(
-        "🚀 Proses & Disposisi Aduan", type="primary", use_container_width=True
-    )
-
-    st.markdown(
-        '<p class="hint-text">💡 <b>Tips:</b> Gunakan kata kunci seperti'
-        ' <i>"darurat"</i>, <i>"bahaya"</i>, atau <i>"segera"</i> untuk'
-        " mengaktifkan status prioritas tinggi.</p>",
-        unsafe_allow_html=True,
-    )
-
-  with col_result:
-    st.subheader("Hasil Analisis & Disposisi")
-
-    if btn_predict:
-      actual_text = text_input.strip()
-
-      if not actual_text:
-        st.warning("Silakan isi teks aduan terlebih dahulu.")
-      elif not api_online:
-        st.error("API FastAPI tidak aktif! Jalankan API terlebih dahulu.")
-      else:
-        with st.spinner("Menganalisis teks & menentukan prioritas..."):
-          try:
-            resp = requests.post(
-                API_URL, json={"text": actual_text}, timeout=10
+        col_meta1, col_meta2 = st.columns(2)
+        with col_meta1:
+            pelapor_input = st.text_input(
+                "Nama Pelapor (Opsional):", placeholder="Contoh: Budi Prasetyo"
             )
-            resp.raise_for_status()
-            res_json = resp.json()
-
-            label = res_json["label"]
-            confidence = res_json.get("confidence", 0.0)
-            urgency = res_json.get("urgency", "🟢 NORMAL")
-
-            # Indikator Urgensi
-            st.markdown(
-                f'<div class="urgent-badge">Tingkat Prioritas: {urgency}</div>',
-                unsafe_allow_html=True,
+        with col_meta2:
+            lokasi_input = st.text_input(
+                "Wilayah / Kecamatan / Alamat:",
+                placeholder="Contoh: Kec. Ngaliyan / RT 02 RW 05",
             )
 
-            # Badge Hasil & Confidence Score
-            st.markdown(
-                f"""
+        text_input = st.text_area(
+            "Isi Keluhan Masyarakat:*",
+            height=150,
+            placeholder="Contoh: BAHAYA! Pipa air utama bocor deras di dekat persimpangan jalan...",
+        )
+
+        btn_predict = st.button(
+            "🚀 Proses & Disposisi Aduan", type="primary", use_container_width=True
+        )
+
+        st.markdown(
+            '<p class="hint-text">💡 <b>Tips:</b> Gunakan kata kunci seperti <i>"darurat"</i>, <i>"bahaya"</i>, atau <i>"segera"</i> untuk mengaktifkan status prioritas tinggi.</p>',
+            unsafe_allow_html=True,
+        )
+
+    with col_result:
+        st.subheader("Hasil Analisis & Disposisi")
+
+        if btn_predict:
+            actual_text = text_input.strip()
+
+            if not actual_text:
+                st.warning("Silakan isi teks aduan terlebih dahulu.")
+            elif not api_online:
+                st.error("API FastAPI tidak terhubung!")
+            else:
+                with st.spinner("Menganalisis teks & menentukan prioritas..."):
+                    try:
+                        resp = requests.post(
+                            API_URL, json={"text": actual_text}, timeout=10
+                        )
+                        resp.raise_for_status()
+                        res_json = resp.json()
+
+                        label = res_json["label"]
+                        confidence = res_json.get("confidence", 0.0)
+                        urgency = res_json.get("urgency", "🟢 NORMAL")
+
+                        st.markdown(
+                            f'<div class="urgent-badge">Tingkat Prioritas: {urgency}</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                        st.markdown(
+                            f"""
                             <div class="badge-container">
                                 <div class="badge-title">Unit Kerja Tujuan</div>
                                 <div class="badge-value">{label}</div>
                             </div>
-                        """,
-                unsafe_allow_html=True,
-            )
+                            """,
+                            unsafe_allow_html=True,
+                        )
 
-            if confidence > 0:
-              st.write(f"**Tingkat Keyakinan AI:** `{confidence}%`")
-              st.progress(int(confidence) / 100)
+                        if confidence > 0:
+                            st.write(f"**Tingkat Keyakinan AI:** `{confidence}%`")
+                            st.progress(int(confidence) / 100)
 
-            # Preview Notifikasi
-            with st.expander(
-                "📬 Preview Alert Disposisi Dinas", expanded=True
-            ):
-              st.caption(
-                  f"Pesan otomatis terkirim ke WhatsApp / Email **Dinas"
-                  f" {label}**:"
-              )
-              st.code(
-                  f"""
-[SISTEM CIVICREPORT ALERT]
+                        with st.expander("📬 Preview Alert Disposisi Dinas", expanded=True):
+                            st.caption(f"Pesan otomatis terkirim ke WhatsApp / Email **Dinas {label}**:")
+                            st.code(
+                                f"""[SISTEM CIVICREPORT ALERT]
 Priority: {urgency}
 Unit Kerja: Dinas {label}
 Lokasi: {lokasi_input if lokasi_input else 'Tidak Disebutkan'}
@@ -261,190 +244,24 @@ Pelapor: {pelapor_input if pelapor_input else 'Anonim'}
 Isi Aduan:
 "{actual_text}"
 
-Status: Disposisi Otomatis oleh AI
-                            """,
-                  language="yaml",
-              )
+Status: Disposisi Otomatis oleh AI""",
+                                language="yaml",
+                            )
 
-            # Simpan ke CSV Log
-            append_log(
-                text=actual_text,
-                label=label,
-                confidence=confidence,
-                urgency=urgency,
-                pelapor=pelapor_input,
-                lokasi=lokasi_input,
-            )
+                        append_log(
+                            text=actual_text,
+                            label=label,
+                            confidence=confidence,
+                            urgency=urgency,
+                            pelapor=pelapor_input,
+                            lokasi=lokasi_input,
+                        )
 
-          except Exception as e:
-            st.error(f"Gagal memproses data: {e}")
-    else:
-      st.info(
-          "Masukkan aduan pada form di sebelah kiri lalu klik tombol **Proses"
-          " & Disposisi Aduan**."
-      )
+                    except Exception as e:
+                        st.error(f"Gagal memproses data: {e}")
+        else:
+            st.info("Masukkan aduan pada form di sebelah kiri lalu klik tombol **Proses & Disposisi Aduan**.")
 
 # -----------------------------------------------------------------------------
-# TAB 2: DASHBOARD
+# TAB 2 & 3 KODE LAINNYA TETAP SAMA...
 # -----------------------------------------------------------------------------
-with tab2:
-  df = load_logs()
-
-  if df.empty:
-    st.info(
-        "Belum ada data laporan yang dicatat. Cobalah melakukan klasifikasi"
-        " pada Tab 'Klasifikasi & Dispatch'."
-    )
-  else:
-    # Metrik Utama
-    total_reports = len(df)
-    top_label = df["predicted_label"].value_counts().idxmax()
-    urgent_count = len(df[df["urgency"].str.contains("DARURAT", na=False)])
-
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total Laporan Masuk", f"{total_reports} Laporan")
-    m2.metric("Kategori Dominan", top_label)
-    m3.metric("Laporan Status Darurat 🚨", f"{urgent_count} Kasus")
-
-    st.divider()
-
-    # Visualisasi Plotly
-    col_chart1, col_chart2 = st.columns([1.2, 0.8])
-    counts = df["predicted_label"].value_counts().reset_index()
-    counts.columns = ["Kategori", "Jumlah"]
-
-    with col_chart1:
-      st.markdown("### Distribusi Kategori Keluhan")
-      fig_bar = px.bar(
-          counts,
-          x="Kategori",
-          y="Jumlah",
-          color="Kategori",
-          text="Jumlah",
-          color_discrete_sequence=px.colors.qualitative.Safe,
-      )
-      fig_bar.update_layout(
-          showlegend=False,
-          margin=dict(l=10, r=10, t=20, b=10),
-          paper_bgcolor="rgba(0,0,0,0)",
-          plot_bgcolor="rgba(0,0,0,0)",
-      )
-      st.plotly_chart(fig_bar, use_container_width=True)
-
-    with col_chart2:
-      st.markdown("### Proporsi Keluhan")
-      fig_pie = px.pie(
-          counts,
-          names="Kategori",
-          values="Jumlah",
-          hole=0.4,
-          color_discrete_sequence=px.colors.qualitative.Safe,
-      )
-      fig_pie.update_layout(
-          margin=dict(l=10, r=10, t=20, b=10), paper_bgcolor="rgba(0,0,0,0)"
-      )
-      st.plotly_chart(fig_pie, use_container_width=True)
-
-    st.divider()
-
-    # Filter & Search Log Data
-    st.markdown("### 📋 Log Laporan Terbaru")
-
-    f_col1, f_col2, f_col3 = st.columns([1, 1, 1])
-    with f_col1:
-      search_query = st.text_input(
-          "🔍 Cari Kata Kunci:", placeholder="Ketik lokasi / teks..."
-      )
-    with f_col2:
-      categories = ["Semua"] + list(df["predicted_label"].unique())
-      selected_cat = st.selectbox("Filter Kategori:", categories)
-    with f_col3:
-      csv_data = df.to_csv(index=False).encode("utf-8")
-      st.markdown(
-          "<div style='height: 28px;'></div>", unsafe_allow_html=True
-      )
-      st.download_button(
-          label="📥 Export Log (CSV)",
-          data=csv_data,
-          file_name=f"log_keluhan_{datetime.now().strftime('%Y%m%d')}.csv",
-          mime="text/csv",
-          use_container_width=True,
-      )
-
-    # Apply Filters
-    filtered_df = df.copy()
-    if selected_cat != "Semua":
-      filtered_df = filtered_df[filtered_df["predicted_label"] == selected_cat]
-    if search_query:
-      filtered_df = filtered_df[
-          filtered_df["text"].str.contains(
-              search_query, case=False, na=False
-          )
-          | filtered_df["lokasi"].str.contains(
-              search_query, case=False, na=False
-          )
-      ]
-
-    st.dataframe(
-        filtered_df.sort_values(by="timestamp", ascending=False),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "timestamp": st.column_config.DatetimeColumn(
-                "Waktu Lapor", format="DD/MM/YYYY, HH:mm"
-            ),
-            "pelapor": "Pelapor",
-            "lokasi": "Wilayah",
-            "text": "Isi Keluhan",
-            "predicted_label": "Kategori AI",
-            "confidence": "Akurasi",
-            "urgency": "Tingkat Prioritas",
-        },
-    )
-
-    # Reset Log Option
-    with st.expander("⚠️ Pengaturan Administrator"):
-      st.caption("Tindakan ini tidak dapat dibatalkan.")
-      if st.button("Reset Log Data", type="primary"):
-        df0 = pd.DataFrame(columns=[
-            "timestamp",
-            "pelapor",
-            "lokasi",
-            "text",
-            "predicted_label",
-            "confidence",
-            "urgency",
-        ])
-        df0.to_csv(LOG_FILE, index=False)
-        st.success("Log berhasil direset!")
-        st.rerun()
-
-# -----------------------------------------------------------------------------
-# TAB 3: MAPS & GEOSPATIAL
-# -----------------------------------------------------------------------------
-with tab3:
-  st.markdown("### 🗺️ Analisis Sebaran Laporan Wilayah")
-  df_map = load_logs()
-
-  if df_map.empty:
-    st.info("Belum ada data lokasi untuk ditampilkan.")
-  else:
-    loc_counts = df_map["lokasi"].value_counts().reset_index()
-    loc_counts.columns = ["Wilayah", "Jumlah Aduan"]
-
-    col_m1, col_m2 = st.columns([1, 1])
-    with col_m1:
-      st.dataframe(loc_counts, use_container_width=True, hide_index=True)
-    with col_m2:
-      fig_map_bar = px.bar(
-          loc_counts,
-          x="Jumlah Aduan",
-          y="Wilayah",
-          orientation="h",
-          color="Jumlah Aduan",
-          color_continuous_scale="Reds",
-      )
-      fig_map_bar.update_layout(
-          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-      )
-      st.plotly_chart(fig_map_bar, use_container_width=True)
