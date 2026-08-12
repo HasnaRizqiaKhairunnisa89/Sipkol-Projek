@@ -1,0 +1,2 @@
+timestamp,pelapor,lokasi,text,predicted_label,confidence,urgency
+2026-08-12 17:22:50,budi,ngaliyan,jalan persimpangan ada kerusakan jalan yang fatal,Infrastruktur,85.0%,🟢 NORMAL
