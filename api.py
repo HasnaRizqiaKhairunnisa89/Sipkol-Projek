@@ -17,6 +17,11 @@ class PredictResponse(BaseModel):
 def health():
     return {"status": "ok"}
 
+@app.get("/")
+def home():
+    return {"status": "SVM API Running"}
+
+
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
     x = vectorizer.transform([req.text])
