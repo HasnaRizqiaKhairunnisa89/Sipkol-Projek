@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import joblib
 from pydantic import BaseModel
 
-# Set up logging untuk melihat detail jika ada error di Render/Cloud
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="CivicReport AI API", version="1.2")
@@ -17,12 +17,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load Model & Vectorizer
+# Load Model & Vectorizer secara aman
+model = None
+vectorizer = None
+
 try:
   model = joblib.load("model.pkl")
   vectorizer = joblib.load("vectorizer.pkl")
+  logging.info("Model dan Vectorizer berhasil dimuat.")
 except Exception as e:
-  logging.error(f"Gagal memuat model: {e}")
+  logging.error(f"⚠️ Gagal memuat model/vectorizer: {e}")
 
 # Kata kunci untuk deteksi urgensi
 HIGH_URGENCY_KEYWORDS = [
@@ -47,12 +51,16 @@ class PredictRequest(BaseModel):
 class PredictResponse(BaseModel):
   label: str
   confidence: float
-  urgency: str  # Darurat / Sedang / Normal
+  urgency: str
 
 
 @app.get("/health")
 def health():
-  return {"status": "ok"}
+  return {
+      "status": "ok",
+      "model_loaded": model is not None,
+      "vectorizer_loaded": vectorizer is not None,
+  }
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -61,28 +69,37 @@ def predict(req: PredictRequest):
   if not req.text or not req.text.strip():
     raise HTTPException(status_code=400, detail="Teks tidak boleh kosong.")
 
+  # 2. Cek Apakah Model & Vectorizer Tersedia
+  if model is None or vectorizer is None:
+    logging.error("Model atau Vectorizer belum dimuat di server.")
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            "Model ML belum dimuat di server. Pastikan file 'model.pkl' dan"
+            " 'vectorizer.pkl' sudah ada di repositori Render."
+        ),
+    )
+
   try:
     text_lower = req.text.lower()
+
+    # Transformer & Predict
     x = vectorizer.transform([req.text])
     pred = model.predict(x)[0]
     label = str(pred)
 
-    # 2. Hitung Confidence Score secara Aman
+    # 3. Hitung Confidence Score
     confidence = 85.0
     try:
       if hasattr(model, "predict_proba"):
         probs = model.predict_proba(x)[0]
         confidence = float(max(probs) * 100)
       elif hasattr(model, "decision_function"):
-        # Alternatif jika model menggunakan Support Vector Machine (SVM)
-        decision = model.decision_function(x)
-        # Bawa nilai decision function ke rentang persentase kasar
         confidence = 80.0
     except Exception as cf_err:
       logging.warning(f"Gagal menghitung confidence: {cf_err}")
-      confidence = 85.0
 
-    # 3. Deteksi Tingkat Urgensi
+    # 4. Deteksi Tingkat Urgensi
     if any(word in text_lower for word in HIGH_URGENCY_KEYWORDS):
       urgency = "🔴 DARURAT"
     elif len(req.text) > 150:
@@ -95,7 +112,7 @@ def predict(req: PredictRequest):
     )
 
   except Exception as e:
-    logging.error(f"Error saat prediksi: {e}")
+    logging.error(f"Error saat memproses prediksi: {e}")
     raise HTTPException(
         status_code=500, detail=f"Gagal memproses prediksi: {str(e)}"
     )
