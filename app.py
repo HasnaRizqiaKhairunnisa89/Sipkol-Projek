@@ -212,7 +212,7 @@ with tab1:
         with st.spinner("Menganalisis teks & menentukan prioritas..."):
           try:
             resp = requests.post(
-                "https://project-skpi.onrender.com/predict", json=payload
+                "https://project-skpi.onrender.com/predict", json={"text": actual_text}, timeout=10
             )
             resp.raise_for_status()
             res_json = resp.json()
