@@ -106,7 +106,7 @@ def load_logs() -> pd.DataFrame:
 
 def check_api_health():
   try:
-    r = requests.get("https://project-skpi.onrender.com/health", timeout=2)
+    r = requests.get("https://project-skpi.onrender.com/health", timeout=3)
     return r.status_code == 200
   except Exception:
     return False
@@ -171,7 +171,6 @@ with tab1:
           "Nama Pelapor (Opsional):", placeholder="Contoh: Budi Prasetyo"
       )
     with col_meta2:
-      # PERUBAHAN DI SINI: Menggunakan text_input agar pengguna bebas mengetik
       lokasi_input = st.text_input(
           "Wilayah / Kecamatan / Alamat:",
           placeholder="Contoh: Kec. Ngaliyan / RT 02 RW 05",
@@ -211,9 +210,9 @@ with tab1:
       else:
         with st.spinner("Menganalisis teks & menentukan prioritas..."):
           try:
-            resp = requests.post(
-                "https://project-skpi.onrender.com/predict", json=payload
-            )
+            # === PERBAIKAN DI SINI ===
+            payload = {"text": actual_text}
+            resp = requests.post(API_URL, json=payload, timeout=10)
             resp.raise_for_status()
             res_json = resp.json()
 
@@ -230,11 +229,11 @@ with tab1:
             # Badge Hasil & Confidence Score
             st.markdown(
                 f"""
-                            <div class="badge-container">
-                                <div class="badge-title">Unit Kerja Tujuan</div>
-                                <div class="badge-value">{label}</div>
-                            </div>
-                        """,
+                <div class="badge-container">
+                    <div class="badge-title">Unit Kerja Tujuan</div>
+                    <div class="badge-value">{label}</div>
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
 
